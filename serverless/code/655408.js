@@ -51,5 +51,5 @@ module.exports.serverless = async function (tradeBids) {
         await db.kv('/data').put('bids', JSON.parse(asks).v.push(...tradeBid))
     }
     
-    console.log({trades: possibleTrades, fee: fee});
+    console.log({trades: possibleTrades, fee: fee, mult: .07 * possibleTrades.length / Math.min(JSON.parse(market).v.length, 25)});
 };

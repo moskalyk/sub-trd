@@ -7,6 +7,11 @@ db = {
                 else return JSON.stringify({v: this[key], status: true})
             }
         }
+    },
+    ps: () => {
+        return {
+            count: new Number(0)
+        }
     }
 }
 
