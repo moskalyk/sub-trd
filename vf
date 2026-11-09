@@ -1,0 +1,376 @@
+#!/usr/bin/env node
+const argv = process.argv;
+const fs = require('fs');
+const util = require("node:util");
+const { generateKeyPairSync } = require('crypto');
+const exec = util.promisify(require("node:child_process").exec);
+
+(async () => {
+    console.log('   >:)    ')
+    console.log('')
+    console.log(`  vfaas`)
+    console.log('')
+    console.log(`command${argv[2] ? '' : 's'}: ${argv[2] == undefined ? '' : argv[2]}`)
+    
+    if(!argv[2]){
+        console.log('  \x1b[36minit\x1b[0m \t\t<fromRootDirectoryPath>\tinitialize a function & unique file name from a directory')
+        console.log('  \x1b[32mkey-gen\x1b[0m\t<keyPhrase> (<force>)\tgenerate a key with a phrase, & if forced overwriten')
+        console.log('  add-key\t<devKey>\tadd a key to permit for code writing to your instance')
+        console.log('  local\t\t<filePath> <functionName> <args>\trun a local function without a db or vm compose, host ending in no /')
+        console.log('  \x1b[36madd-tunnel\x1b[0m\t<tunnel>\tadd a tunnel or endpoint to be used instead of localhost')
+        console.log('  \x1b[36mwrite\x1b[0m\t\t<rootPathToFile> <origin>\twrite a function to subnet, file name as bundleID')
+        console.log('  list\t\t\t\tlist written bundleIDs')
+        console.log('  del\t\t<bundleID>\tdelete a bundleID')
+        console.log('  shh\t\tsecret sharing methods to be used in compute')
+        console.log()
+        console.log('  --help\tappend to shh command to get help with how to use')
+        console.log('  about\t\tlearn about the program https://vfaas.net')
+        console.log()
+    }
+
+    const code = 
+`module.exports.serverless = async function () {
+
+};`
+    
+    switch(argv[2]){
+        case 'init':
+            const filePath = argv[3]
+            if(!filePath) throw new Error('include a <filePath>')
+            const initPromise = () => new Promise(async (res) => {
+                if (fs.existsSync(filePath+'/code/')) {
+                    const fileName = Math.floor(Math.random() * 1000000)
+                    await fs.writeFileSync(filePath+'/code/'+`${fileName}.js`, code, {encoding:'utf8',flag:'a'})
+                    console.log('success')
+                    res()
+                }else {
+                    console.log(filePath+'code/')
+                    await fs.mkdirSync(filePath+'/code/',{ recursive: true })
+                    const fileName = Math.floor(Math.random() * 1000000)
+                    await fs.writeFileSync(filePath+'/code/'+`${fileName}.js`, code, {encoding:'utf8',flag:'a'})
+                    console.log('success')
+                }
+            })
+            await initPromise()
+            break;
+        case 'key-gen':
+        
+            // get dirname
+            const keyPhrase = argv[3]
+            const force = argv[5]
+            
+            // if exists, print
+            const {
+              publicKey,
+              privateKey,
+            } = generateKeyPairSync('rsa', {
+              modulusLength: 4096,
+              publicKeyEncoding: {
+                type: 'spki',
+                format: 'pem',
+              },
+              privateKeyEncoding: {
+                type: 'pkcs8',
+                format: 'pem',
+                cipher: 'aes-256-cbc',
+                passphrase: keyPhrase,
+              },
+            });
+
+            const versusPathConfigs = __dirname+'/versus/'
+            let written = false;
+            if (fs.existsSync(versusPathConfigs) && force) {
+                console.log('forcing')
+                const config = {
+                    tunnel: 'https://vfaas.ngrok.dev',
+                    devs: [],
+                    key: publicKey,
+                    README: 'do not delete'
+                }
+                
+                try {
+                  await fs.mkdirSync(versusPathConfigs)
+                }catch(err){
+                    const promise = () => new Promise((res) => {
+                        fs.readFile(versusPathConfigs+'config.json' , async (err, data) => {
+                            const existing = JSON.parse(data.toString())
+                            config.devs = existing.devs
+                            config.tunnel = existing.tunnel
+                            config.key = publicKey
+                            await fs.writeFileSync(versusPathConfigs+'config.json', JSON.stringify(existing), {encoding:'utf8', flag:'w'})
+                            res()
+                        })
+                    })
+                    
+                    await promise()
+                    console.log()
+                }
+                
+                !written && await fs.writeFileSync(versusPathConfigs+'config.json', JSON.stringify(config), {encoding:'utf8', flag:'w'})
+                
+            } else if(!fs.existsSync(versusPathConfigs)){
+                // if doesn't exist, create file and add
+                const config = {
+                    tunnel: 'https://vfaas.ngrok.dev',
+                    devs: [],
+                    key: publicKey,
+                    README: 'do not delete'
+                }
+                await fs.mkdirSync(versusPathConfigs)
+
+                await fs.writeFileSync(versusPathConfigs+'config.json', JSON.stringify(config), {encoding:'utf8', flag:'wx'})
+
+            } else {
+                console.log('already defined key')
+            }
+            break;
+            
+        case 'add-key':
+            const versusPathConfigAddKey = __dirname+'/versus/'
+            const addingKey = argv[3]
+            if (fs.existsSync(versusPathConfigAddKey)) {
+                const promise = () => new Promise((res) => {
+                    fs.readFile(versusPathConfigAddKey+'config.json' , async (err, data) => {
+                            const existing = JSON.parse(data.toString())
+                            existing.devs.push(addingKey)
+                            await fs.writeFileSync(versusPathConfigAddKey+'config.json', JSON.stringify(existing), {encoding:'utf8', flag:'w'})
+                            res()
+                        })
+                    })
+                await promise()
+            } else {
+                console.log()
+                console.log('initialize your key first: $ node vf key-gen <passphrase>')
+                console.log()
+            }
+                    
+            break;
+        case 'local':
+            const filepath = argv[3]
+            const functionName = argv[4]
+            const args = argv[5]
+            let cmd
+            
+            if(args && args.length>0){
+              cmd =  `node -e 'require("${filepath}").${functionName}(${args.split(',')})'`
+            }else {
+              cmd =  `node -e 'require("${filepath}").${functionName}()'`
+            }
+
+            const { error, stdout, stderr } = await exec(cmd);
+            console.log(stdout)
+            break;
+            
+        case 'add-tunnel':
+            const tunnel = argv[3]
+            if(!argv[3]) throw new Error('<tunnel> required')
+            const versusPathConfig = __dirname+'/versus/'
+            if (!fs.existsSync(versusPathConfig)) {
+                console.log('WARNING: do not delete', versusPathConfig+'config.json')
+                const yaStr = {
+                    tunnel: tunnel,
+                    devs: [],
+                    key: null,
+                    README: 'do not delete'
+                }
+                await fs.mkdirSync(versusPathConfig)
+                await fs.writeFileSync(versusPathConfig+'config.json', JSON.stringify(yaStr), {encoding:'utf8', flag:'wx'})
+                console.log('added newly configuration')
+            } else {
+                console.log()
+                const promise = () => new Promise((res) => {
+                    fs.readFile(versusPathConfig+'config.json' , async (err, data) => {
+                        const existing = JSON.parse(data.toString())
+                        
+                        existing.tunnel = tunnel
+                        
+                        await fs.writeFileSync(versusPathConfig+'config.json', JSON.stringify(existing), {encoding:'utf8', flag:'w'})
+
+                        res()
+                    })
+                })
+                
+                await promise();
+                console.log('tunnel configuration updated:' , argv[3])
+                console.log()
+            }
+            
+            break;
+
+        case 'write':
+            const fp = argv[3]
+            const allowedOrigins = argv[4]
+            
+            if(!fp) throw new Error('No function path included')
+            
+            const runWrite = async (body) => {
+                const versusPathConfigWrite = __dirname+'/versus/'
+                const fileRead = await fs.readFileSync(versusPathConfigWrite+'config.json')
+                const fileNameToTunnel = JSON.parse(fileRead.toString())
+                try{
+                  const res = await fetch(`${fileNameToTunnel.tunnel}/write`, {
+                        method: 'post',
+                        body: JSON.stringify({ msg: body, allowedOrigins: allowedOrigins })
+                    });
+                    const val = await res.json()
+                    console.log('written to '+ fileNameToTunnel.tunnel)
+                    return val  
+                }catch(err){
+                    console.log('bad tunnel endpoint or server not running')
+                    throw new Error(err)
+                }
+            };
+            const promise = () => new Promise((res) => {
+                fs.readFile(fp , async (err, data) => {
+                    const versusPathConfigKey = __dirname+'/versus/'
+                    const fileRead = await fs.readFileSync(versusPathConfigKey+'config.json')
+                    const fileNameToAuthor = JSON.parse(fileRead.toString())
+
+                    const writingObj = {
+                        code: JSON.stringify(data.toString()),
+                        author: fileNameToAuthor.key,
+                        bundleID: fp.split('/')[fp.split('/').length -1 ].split('.js')[0]
+                    }
+                    
+                    console.log(await runWrite(writingObj))
+                    res()
+                })
+            })
+            try{
+                await promise();
+            }catch(err){
+                throw new Error(err)
+            }
+            break;
+
+        case 'list':
+            const author = argv[3]
+
+            const runList = async (author) => {
+                const versusPathConfigWrite = __dirname+'/versus/'
+                const fileRead = await fs.readFileSync(versusPathConfigWrite+'config.json')
+                const fileNameToTunnel = JSON.parse(fileRead.toString())
+                try{
+                    const res = await fetch(`${fileNameToTunnel.tunnel}/list`, {
+                        method: 'post',
+                        body: JSON.stringify({ author: author })
+                    });
+                    const val = await res.json()
+                    return val
+                }catch(err){
+                    console.log()
+                    console.log('bad tunnel endpoint or server not running')
+                    throw new Error(err)
+                    console.log()
+                }
+            };
+            console.log(' BundleID  |   Author')
+            console.log('-----------|-----------')
+            let output = ''
+            const list = await runList(author)
+            Object.keys(list.val).map((el) => {
+                output += " " + el.split(':')[1] + '\t      ' + el.split(':')[0] + '\n'
+            })
+            console.log(output)
+            break;
+
+        case 'del':
+            const auth = argv[3]
+            const bundleID = argv[4]
+            
+            if(!auth) throw new Error('No Author, include author public key')
+            if(!bundleID) throw new Error('No BundleID')
+            const runDel = async (auth, bundleID) => {
+                const versusPathConfigWrite = __dirname+'/versus/'
+                const fileRead = await fs.readFileSync(versusPathConfigWrite+'config.json')
+                const fileNameToTunnel = JSON.parse(fileRead.toString())
+                try{
+                    const res = await fetch(`${fileNameToTunnel.tunnel}/delete`, {
+                        method: 'post',
+                        body: JSON.stringify({ author: auth, bundleID })
+                    });
+                    const val = await res.json()
+                    return val
+                }catch(err){
+                    console.log()
+                    console.log('bad tunnel endpoint or server not running')
+                    throw new Error(err)
+                    console.log()
+                }
+            };
+            
+            await runDel(auth, bundleID)
+            break;
+        case 'about':
+            console.log('%very-fast-as-a-service')
+            console.log()
+            console.log('compete against megacorp. \n\nbeginning in march 2025 by the corporation versus energy innovations inc. out of receiving censorship from modern sillicon valley platforms and applications since 2021, the suite allows users, developers, and companies to bootstrap their own networks and work together to build infrastructure required to run their digital lives. build on a hub and spoke model from USBs, aimed at privacy preserving with scale.')
+            console.log('\nneed help? reach out to ~zod @ +1647-9140157') 
+            console.log('home: https://rnft.life')
+            console.log('')
+            break;
+        case 'shh':
+            const method = argv[3]
+            
+            if(!argv[4]){
+                    console.log('  +\t<variable> <secret>\tadd a secret to be used in compute')
+                    console.log('  list\t\t\t\tlist secrets to be used in compute')
+                    console.log('  -\t<variable>\t\tdelete a secret to be used in compute')
+            }
+            
+            switch(method){
+                case '+':
+                    const variable = argv[4]
+                    const secret = argv[5]
+                    console.log(secret)
+                    if(!variable) throw new Error('Include a variable')
+                    if(!secret) throw new Error('Include a secret')
+                    let hexSecret = Buffer.from(secret).toString('hex');
+                    console.log(hexSecret)                    
+                    const versusPathConfigWrite = __dirname+'/versus/'
+                    const fileRead = await fs.readFileSync(versusPathConfigWrite+'config.json')
+                    const fileNameToTunnel = JSON.parse(fileRead.toString())
+                    try{
+                        const res = await fetch(`${fileNameToTunnel.tunnel}/shares`, {
+                            method: 'post',
+                            body: JSON.stringify({ key: variable, hexSecret: hexSecret })
+                        });
+                        const val = await res.json()
+                        return val
+                    }catch(err){
+                        console.log()
+                        console.log('bad tunnel endpoint or server not running')
+                        throw new Error(err)
+                        console.log()
+                    }
+                break;
+                case 'list':
+                    console.log('TODO')
+
+                break;
+                case '-':
+                    console.log('TODO')
+                    break;
+                    
+                case '--help':
+                    console.log('')
+                    console.log('examples')
+                    console.log('add secret: $ node vf shh +z`` myKey 12345')
+                break;
+
+            }
+            break;
+        case 'test':
+            const runTest = async () => {
+                const res = await fetch(`http://localhost:3000/computer`, {
+                    method: 'get',
+                });
+                const val = await res.json()
+                return val
+            };
+            
+            console.log(await runTest())
+            
+            break;
+    }
+})()
