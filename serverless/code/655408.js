@@ -31,7 +31,7 @@ module.exports.serverless = async function (tradeBids) {
        txo.spent = true;
     }
 
-    let fee = inputAmount - outputAmount;
+    let fee;
     
     let outputTrades = []
     let spent = 0
@@ -42,14 +42,18 @@ module.exports.serverless = async function (tradeBids) {
         for(let i = 0; i < possibleTrades.length; i++){
             spent += possibleTrades[i].amount
             outputTrades.push(possibleTrades[i])
+            fee = inputAmount - spent;
+
             if(spent >= inputAmount) break;
         }
-        await db.kv('/data').put('history', JSON.parse(history).v.push(...outputTrades))
+        const placeBack = JSON.parse(history).v
+        placeBack.push(...outputTrades)
+        await db.kv('/data').put('history', placeBack)
     } else {
         /* plop on the bids market */
         const asks = await db.kv('/data').get('asks')
         await db.kv('/data').put('bids', JSON.parse(asks).v.push(...tradeBid))
     }
     
-    console.log({trades: possibleTrades, fee: fee});
+    return {trades: outputTrades, fee: fee, mult: .07 * possibleTrades.length / Math.min(JSON.parse(market).v.length, 25)};
 };
